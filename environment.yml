@@ -41,5 +41,14 @@ dependencies:
     - pyquaternion==0.9.9
     - compress_pickle==2.1.0
     - lru-dict
+    - compress-pickle==2.1.0
+    - compress-json
+    - datasets
+    - invoke
+    - shapely
+    - ffmpeg-python
+    - h5py
+    - "git+https://github.com/openai/CLIP.git"
+
     - canonicaljson
 prefix: /anaconda3/envs/thor-rearrange

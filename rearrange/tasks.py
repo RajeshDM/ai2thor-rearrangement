@@ -19,6 +19,7 @@ from allenact.base_abstractions.task import Task, TaskSampler
 from allenact.utils.misc_utils import md5_hash_str_as_int
 from allenact.utils.system import get_logger
 from allenact_plugins.ithor_plugin.ithor_util import round_to_factor
+
 from rearrange.constants import STARTER_DATA_DIR, STEP_SIZE
 from rearrange.environment import (
     RearrangeTHOREnvironment,
@@ -63,6 +64,8 @@ class AbstractRearrangeTask(Task, ABC):
 
 
 class UnshuffleTask(AbstractRearrangeTask):
+    NAME_KEY = "name"
+
     def __init__(
         self,
         sensors: SensorSuite,
@@ -157,29 +160,43 @@ class UnshuffleTask(AbstractRearrangeTask):
         self.actions_taken_success = []
         self.agent_locs = [self.unshuffle_env.get_agent_location()]
 
+    def create_navigator(self):
+        return ShortestPathNavigatorTHOR(
+            controller=self.unshuffle_env.controller,
+            grid_size=STEP_SIZE,
+            include_move_left_right=all(
+                f"move_{k}" in self.action_names() for k in ["left", "right"]
+            ),
+        )
+
+    def create_expert(self):
+        return GreedyUnshuffleExpert(
+            task=self,
+            shortest_path_navigator=self.unshuffle_env.shortest_path_navigator,
+        )
+
+    @property
+    def expert_priority(self):
+        return self.greedy_expert.object_name_to_priority
+
     def query_expert(self, **kwargs) -> Tuple[Any, bool]:
         if self.greedy_expert is None:
             if not hasattr(self.unshuffle_env, "shortest_path_navigator"):
                 # TODO: This is a bit hacky
-                self.unshuffle_env.shortest_path_navigator = ShortestPathNavigatorTHOR(
-                    controller=self.unshuffle_env.controller,
-                    grid_size=STEP_SIZE,
-                    include_move_left_right=all(
-                        f"move_{k}" in self.action_names() for k in ["left", "right"]
-                    ),
-                )
+                self.unshuffle_env.shortest_path_navigator = self.create_navigator()
 
-            self.greedy_expert = GreedyUnshuffleExpert(
-                task=self,
-                shortest_path_navigator=self.unshuffle_env.shortest_path_navigator,
-            )
+            self.greedy_expert = self.create_expert()
+
             if self.object_names_seen_in_walkthrough is not None:
                 # The expert shouldn't act on objects the walkthrougher hasn't seen!
                 c = self.unshuffle_env.controller
                 with include_object_data(c):
                     for o in c.last_event.metadata["objects"]:
-                        if o["name"] not in self.object_names_seen_in_walkthrough:
-                            self.greedy_expert.object_name_to_priority[o["name"]] = (
+                        if (
+                            o[self.NAME_KEY]
+                            not in self.object_names_seen_in_walkthrough
+                        ):
+                            self.expert_priority[o[self.NAME_KEY]] = (
                                 self.greedy_expert.max_priority_per_object + 1
                             )
 
@@ -777,12 +794,20 @@ class RearrangeTaskSpecIterable:
         self.remaining_scenes = list(
             sorted(
                 self.scenes_to_task_spec_dicts.keys(),
-                key=lambda s: int(s.replace("FloorPlan", "")),
+                key=lambda s: int(
+                    s.replace("FloorPlan", "")
+                    .replace("train_", "")
+                    .replace("val_", "")
+                    .replace("valid_", "")
+                ),
             )
         )
         if self.shuffle:
             self.random.shuffle(self.remaining_scenes)
         return self.remaining_scenes
+
+    def preprocess_spec_dict(self, spec_dict):
+        return spec_dict
 
     def __next__(self) -> RearrangeTaskSpec:
         if len(self.task_spec_dicts_for_current_scene) == 0:
@@ -796,7 +821,9 @@ class RearrangeTaskSpecIterable:
             if self.shuffle:
                 self.random.shuffle(self.task_spec_dicts_for_current_scene)
 
-        new_task_spec_dict = self.task_spec_dicts_for_current_scene.pop()
+        new_task_spec_dict = self.preprocess_spec_dict(
+            self.task_spec_dicts_for_current_scene.pop()
+        )
         if "scene" not in new_task_spec_dict:
             new_task_spec_dict["scene"] = self.current_scene
         else:
@@ -866,18 +893,13 @@ class RearrangeTaskSampler(TaskSampler):
             if epochs.lower().strip() != "default":
                 raise NotImplementedError(f"Unknown value for `epochs` (=={epochs})")
             epochs = float("inf") if stage == "train" else 1
-        self.task_spec_iterator = RearrangeTaskSpecIterable(
-            scenes_to_task_spec_dicts=self.scenes_to_task_spec_dicts,
-            seed=self.main_seed,
-            epochs=epochs,
-            shuffle=epochs == float("inf"),
-        )
+        self.task_spec_iterator = self.make_task_spec_iterable(epochs)
 
-        self.walkthrough_env = RearrangeTHOREnvironment(**rearrange_env_kwargs)
+        self.walkthrough_env = self.create_env(**rearrange_env_kwargs)
 
         self.unshuffle_env: Optional[RearrangeTHOREnvironment] = None
         if self.run_unshuffle_phase:
-            self.unshuffle_env = RearrangeTHOREnvironment(**rearrange_env_kwargs)
+            self.unshuffle_env = self.create_env(**rearrange_env_kwargs)
 
         self.scenes = list(self.scenes_to_task_spec_dicts.keys())
 
@@ -893,6 +915,21 @@ class RearrangeTaskSampler(TaskSampler):
         self._last_sampled_walkthrough_task: Optional[WalkthroughTask] = None
         self.was_in_exploration_phase: bool = False
 
+    def make_task_spec_iterable(self, epochs):
+        return RearrangeTaskSpecIterable(
+            scenes_to_task_spec_dicts=self.scenes_to_task_spec_dicts,
+            seed=self.main_seed,
+            epochs=epochs,
+            shuffle=epochs == float("inf"),
+        )
+
+    def create_env(self, **kwargs):
+        return RearrangeTHOREnvironment(**kwargs)
+
+    @classmethod
+    def get_base_dir(cls):
+        return STARTER_DATA_DIR
+
     @classmethod
     def from_fixed_dataset(
         cls,
@@ -906,7 +943,7 @@ class RearrangeTaskSampler(TaskSampler):
     ):
         scenes_to_task_spec_dicts = cls._filter_scenes_to_task_spec_dicts(
             scenes_to_task_spec_dicts=cls.load_rearrange_data_from_path(
-                stage=stage, base_dir=STARTER_DATA_DIR
+                stage=stage, base_dir=cls.get_base_dir(), scenes=allowed_scenes
             ),
             allowed_scenes=allowed_scenes,
             scene_to_allowed_rearrange_inds=scene_to_allowed_rearrange_inds,
@@ -976,7 +1013,10 @@ class RearrangeTaskSampler(TaskSampler):
 
     @classmethod
     def load_rearrange_data_from_path(
-        cls, stage: str, base_dir: Optional[str] = None,
+        cls,
+        stage: str,
+        base_dir: Optional[str] = None,
+        scenes: Optional[Sequence[str]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         stage = stage.lower()
 
@@ -1063,6 +1103,39 @@ class RearrangeTaskSampler(TaskSampler):
         else:
             return self.walkthrough_env.current_task_spec
 
+    def walkthrough_env_post_reset(self):
+        pass
+
+    def create_unshuffle_task(self):
+        return UnshuffleTask(
+            sensors=self.sensors,
+            unshuffle_env=self.unshuffle_env,
+            walkthrough_env=self.walkthrough_env,
+            max_steps=self.max_steps["unshuffle"],
+            discrete_actions=self.discrete_actions,
+            require_done_action=self.require_done_action,
+            task_spec_in_metrics=self.task_spec_in_metrics,
+        )
+
+    def create_unshuffle_after_walkthrough_task(self, walkthrough_task):
+        return UnshuffleTask(
+            sensors=self.sensors,
+            unshuffle_env=self.unshuffle_env,
+            walkthrough_env=self.walkthrough_env,
+            max_steps=self.max_steps["unshuffle"],
+            discrete_actions=self.discrete_actions,
+            require_done_action=self.require_done_action,
+            locations_visited_in_walkthrough=np.array(
+                tuple(walkthrough_task.visited_positions_xzrsh)
+            ),
+            object_names_seen_in_walkthrough=copy.copy(
+                walkthrough_task.seen_pickupable_objects
+                | walkthrough_task.seen_openable_objects
+            ),
+            metrics_from_walkthrough=walkthrough_task.metrics(force_return=True),
+            task_spec_in_metrics=self.task_spec_in_metrics,
+        )
+
     def next_task(
         self, forced_task_spec: Optional[RearrangeTaskSpec] = None, **kwargs
     ) -> Optional[UnshuffleTask]:
@@ -1143,6 +1216,8 @@ class RearrangeTaskSampler(TaskSampler):
                     force_axis_aligned_start=self.force_axis_aligned_start,
                 )
 
+                self.walkthrough_env_post_reset()
+
                 if self.run_walkthrough_phase:
                     self.was_in_exploration_phase = True
                     self._last_sampled_task = WalkthroughTask(
@@ -1155,15 +1230,7 @@ class RearrangeTaskSampler(TaskSampler):
                     self._last_sampled_walkthrough_task = self._last_sampled_task
                 else:
                     self.cur_unshuffle_runs_count += 1
-                    self._last_sampled_task = UnshuffleTask(
-                        sensors=self.sensors,
-                        unshuffle_env=self.unshuffle_env,
-                        walkthrough_env=self.walkthrough_env,
-                        max_steps=self.max_steps["unshuffle"],
-                        discrete_actions=self.discrete_actions,
-                        require_done_action=self.require_done_action,
-                        task_spec_in_metrics=self.task_spec_in_metrics,
-                    )
+                    self._last_sampled_task = self.create_unshuffle_task()
             except Exception as e:
                 if runtime_sample:
                     get_logger().error(
@@ -1190,22 +1257,8 @@ class RearrangeTaskSampler(TaskSampler):
                 )
                 self.unshuffle_env.shuffle()
 
-            self._last_sampled_task = UnshuffleTask(
-                sensors=self.sensors,
-                unshuffle_env=self.unshuffle_env,
-                walkthrough_env=self.walkthrough_env,
-                max_steps=self.max_steps["unshuffle"],
-                discrete_actions=self.discrete_actions,
-                require_done_action=self.require_done_action,
-                locations_visited_in_walkthrough=np.array(
-                    tuple(walkthrough_task.visited_positions_xzrsh)
-                ),
-                object_names_seen_in_walkthrough=copy.copy(
-                    walkthrough_task.seen_pickupable_objects
-                    | walkthrough_task.seen_openable_objects
-                ),
-                metrics_from_walkthrough=walkthrough_task.metrics(force_return=True),
-                task_spec_in_metrics=self.task_spec_in_metrics,
+            self._last_sampled_task = self.create_unshuffle_after_walkthrough_task(
+                walkthrough_task
             )
 
         return self._last_sampled_task
