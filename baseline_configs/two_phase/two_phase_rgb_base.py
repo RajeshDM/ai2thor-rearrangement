@@ -22,7 +22,7 @@ from rearrange.sensors import (
     RGBRearrangeSensor,
     InWalkthroughPhaseSensor,
 )
-from rearrange.tasks import RearrangeTaskSampler
+from rearrange.tasks import RearrangeTaskSampler,RearrangeTaskSamplerPOMDP
 
 
 class TwoPhaseRGBBaseExperimentConfig(RearrangeBaseExperimentConfig, ABC):
@@ -86,6 +86,61 @@ class TwoPhaseRGBBaseExperimentConfig(RearrangeBaseExperimentConfig, ABC):
                     "renderDepthImage": any(
                         isinstance(s, DepthSensor) for s in sensors
                     ),
+                },
+            ),
+            seed=seed,
+            sensors=SensorSuite(sensors),
+            max_steps=cls.MAX_STEPS,
+            discrete_actions=cls.actions(),
+            require_done_action=cls.REQUIRE_DONE_ACTION,
+            force_axis_aligned_start=cls.FORCE_AXIS_ALIGNED_START,
+            unshuffle_runs_per_walkthrough=cls.TRAIN_UNSHUFFLE_RUNS_PER_WALKTHROUGH
+            if (not only_one_unshuffle_per_walkthrough) and stage == "train"
+            else None,
+            epochs=epochs,
+            **kwargs,
+        )
+
+    @classmethod
+    def make_POMDP_sampler_fn(
+        cls,
+        stage: str,
+        force_cache_reset: bool,
+        allowed_scenes: Optional[Sequence[str]],
+        seed: int,
+        epochs: Union[str, float, int],
+        scene_to_allowed_rearrange_inds: Optional[Dict[str, Sequence[int]]] = None,
+        x_display: Optional[str] = None,
+        sensors: Optional[Sequence[Sensor]] = None,
+        only_one_unshuffle_per_walkthrough: bool = False,
+        thor_controller_kwargs: Optional[Dict] = None,
+        **kwargs,
+    ) -> RearrangeTaskSamplerPOMDP:
+        """Return a RearrangeTaskSamplerPOMDP"""
+        sensors = cls.SENSORS if sensors is None else sensors
+
+        if "mp_ctx" in kwargs:
+            del kwargs["mp_ctx"]
+        assert not cls.RANDOMIZE_START_ROTATION_DURING_TRAINING
+
+        return RearrangeTaskSamplerPOMDP.from_fixed_dataset(
+            run_walkthrough_phase=True,
+            run_unshuffle_phase=True,
+            stage=stage,
+            allowed_scenes=allowed_scenes,
+            scene_to_allowed_rearrange_inds=scene_to_allowed_rearrange_inds,
+            rearrange_env_kwargs=dict(
+                force_cache_reset=force_cache_reset,
+                **cls.REARRANGE_ENV_KWARGS,
+                controller_kwargs={
+                    "x_display": x_display,
+                    #**cls.THOR_CONTROLLER_KWARGS,
+                    **(
+                        {} if thor_controller_kwargs is None else thor_controller_kwargs
+                    ),
+                    #"renderDepthImage": any(
+                    #    isinstance(s, DepthSensor) for s in sensors
+                    #),
                 },
             ),
             seed=seed,
