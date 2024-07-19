@@ -22,7 +22,8 @@ from rearrange.sensors import (
     RGBRearrangeSensor,
     InWalkthroughPhaseSensor,
 )
-from rearrange.tasks import RearrangeTaskSampler,RearrangeTaskSamplerPOMDP
+from rearrange.tasks import RearrangeTaskSampler
+from rearrange.pomdp_tasks import RearrangeTaskSamplerPOMDP
 
 
 class TwoPhaseRGBBaseExperimentConfig(RearrangeBaseExperimentConfig, ABC):

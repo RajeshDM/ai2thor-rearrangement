@@ -10,6 +10,7 @@ STARTER_DATA_DIR = os.path.join(
 )
 
 THOR_COMMIT_ID = "a9ccb07faf771377c9ff1615bfe7e0ad01968663"
+#THOR_COMMIT_ID = "90eac925dc750818890069e3131f899998dc58b4"
 STEP_SIZE = 0.25
 
 # fmt: off
@@ -199,6 +200,16 @@ OPENABLE_OBJECTS = list(
             object_type
             for object_type, properties in OBJECT_TYPES_WITH_PROPERTIES.items()
             if properties["openable"] and not properties["pickupable"]
+        ]
+    )
+)
+
+RECEPTACLES_ONLY = list(
+    sorted(
+        [
+            object_type
+            for object_type, properties in OBJECT_TYPES_WITH_PROPERTIES.items()
+            if properties["receptacle"] and not properties["pickupable"]
         ]
     )
 )

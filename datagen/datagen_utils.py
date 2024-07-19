@@ -1,12 +1,15 @@
+import glob
+import os
 import random
 from collections import defaultdict
 from typing import List, Dict, Set, Optional, Any
+import compress_pickle
+import compress_json
 
 from ai2thor.controller import Controller
 
 from datagen.datagen_constants import OBJECT_TYPES_THAT_CAN_HAVE_IDENTICAL_MESHES
-from rearrange_constants import OPENNESS_THRESHOLD
-
+from rearrange_constants import OPENNESS_THRESHOLD,ABS_PATH_OF_REARRANGE_TOP_LEVEL_DIR
 
 def get_scenes(stage: str) -> List[str]:
     """Returns a list of iTHOR scene names for each stage."""
@@ -33,6 +36,44 @@ def get_scenes(stage: str) -> List[str]:
     bathrooms = [f"FloorPlan{400+i}" for i in scene_nums]
     return kitchens + living_rooms + bedrooms + bathrooms
 
+def get_scenes_procthor(stage):
+    base_dir = os.path.join("data", "2022procthor")
+
+    split = ''
+    if 'train' in stage:
+        split = 'split_train'
+    elif 'valid' in stage: 
+        split = 'split_mini_val'
+
+    scene_names_file = os.path.join(
+        ABS_PATH_OF_REARRANGE_TOP_LEVEL_DIR,
+        base_dir,
+        #"split_train",
+        split,
+        "scene_names.json.gz",
+    )
+    if os.path.exists(scene_names_file):
+        print(f"Cached scenes file found at {scene_names_file}, using this file.")
+        return compress_json.load(scene_names_file)
+
+    firsts_lasts_fnames = []
+    dataset_file_paths = glob.glob(os.path.join(base_dir, "split_train", "*.pkl.gz"))
+    assert len(dataset_file_paths) > 0
+    for fname in dataset_file_paths:
+        vals = fname.replace(".pkl.gz", "").split("_")[-2:]
+        firsts_lasts_fnames.append((int(vals[0]), int(vals[1]), fname))
+    firsts_lasts_fnames = sorted(firsts_lasts_fnames)
+
+    scenes = []
+    for first, last, fname in firsts_lasts_fnames:
+        get_logger().info(f"Loading data from {fname}")
+        current_scenes = list(compress_pickle.load(path=fname).keys())
+        scenes.extend(sorted(current_scenes, key=lambda x: int(x.split("_")[1])))
+
+    scenes = sorted(scenes, key=lambda x: int(x.split("_")[1]))
+
+    compress_json.dump(scenes, scene_names_file)
+    return scenes
 
 def filter_pickupable(
     objects: List[Dict], object_types_to_not_move: Set[str]

@@ -17,6 +17,7 @@ from line_profiler import LineProfiler
 
 from cospomdp_apps.thor import constants
 from cospomdp_apps.thor.common import TaskArgs, make_config
+from cospomdp_apps.thor.agent.components.action import PickObj, PlaceObj, OpenObj, CloseObj
 
 sys.path.append("/home/rajesh/rajesh/pomdp/pomdp_rearrangement/experiments/thor")
 
@@ -28,6 +29,7 @@ from experiment_thor import (Methods,
 
 POUCT_ARGS = dict(max_depth=20,
                   num_sims=150,
+                  #num_sims=500,
                   discount_factor=0.95,
                   exploration_const=100,
                   show_progress=True)
@@ -38,10 +40,9 @@ MAX_STEPS = 100
 TOPO_PLACE_SAMPLES = 20  # specific to hierarchical methods
 
 
-
-def make_POMDP_trial(method, run_num, scene_type, scene, target, detector_models,
+def make_POMDP_trial(method, run_num, scene_type, scene, targets, detector_models,
                corr_objects=None, max_steps=constants.MAX_STEPS,
-               visualize=False, viz_res=30):
+               visualize=False, viz_res=30,multi=False, manip=False):
     """
     Args:
         scene: scene to search in
@@ -62,9 +63,19 @@ def make_POMDP_trial(method, run_num, scene_type, scene, target, detector_models
     elif "Random" not in method["agent"]:
         agent_init_inputs.append('camera_pose')
 
-    detector_specs = {
-        target: detector_models[target]
-    }
+    #detector_specs = {
+    #    target: detector_models[target]
+    #}
+    detector_specs = {}
+
+    for target in targets :
+        if method["use_vision_detector"] :#or True :
+            detector_specs[target] = detector_model
+        else :
+            perfect_detector_TP_FP_sigma = (0.999, 0.001, 0.5)
+            detector_model = (detector_models[target][0], detector_models[target][1], perfect_detector_TP_FP_sigma)
+            detector_specs[target] = detector_model
+
     corr_specs = {}
     '''
     if method["use_corr"]:
@@ -74,11 +85,23 @@ def make_POMDP_trial(method, run_num, scene_type, scene, target, detector_models
             detector_specs[other] = detector_models[other]
     '''
 
+    if manip == True:
+        task_env = "ThorObjectManip"
+        task_objs = "manip"
+    elif multi == True  :
+        task_env = "ThorMultiObjectSearch"
+        task_objs = "mos"
+    else :
+        task_env = "ThorObjectSearch"
+
+    target= targets[0]
     args = TaskArgs(detectables=set(detector_specs.keys()),
                     scene=scene,
                     target=target,
+                    targets=targets,
                     agent_class=method["agent"],
-                    task_env="ThorObjectSearch",
+                    #task_env="ThorObjectSearch",
+                    task_env=task_env,
                     max_steps=max_steps,
                     agent_init_inputs=agent_init_inputs,
                     save_load_corr=method['use_corr'],
@@ -101,6 +124,32 @@ def make_POMDP_trial(method, run_num, scene_type, scene, target, detector_models
         config["agent_config"]["local_search_type"] = "3d"
         config["agent_config"]["local_search_params"] = LOCAL_POUCT_ARGS
 
+        if "manip" in method['agent'].lower():
+            #TODO - CLEANUP - after the code runs, move this to make_config and 
+            #mostly under agent_config and not task_config
+            manip_distance = 0.25
+            manip_angle = 90
+            config["agent_config"]["local_search_type"] = "3d_manip"
+            config["task_config"]["manip_config"] = {}
+            config['task_config']["manip_config"]["manip_distances"] = {
+                "PickupObj": manip_distance,
+                "PlaceObj": manip_distance,
+                "OpenObj": manip_distance,
+                "CloseObj": manip_distance,
+            }
+            config["task_config"]["manip_config"]["manip_angles"] = {
+                "PickupObj": manip_angle,
+                "PlaceObj": manip_angle,
+                "OpenObj": manip_angle,
+                "CloseObj": manip_angle,
+            }
+            config['task_config']["manip_config"]['manip_actions'] = {
+                "PickupObj": PickObj,
+                "PlaceObj": PlaceObj,
+                "OpenObj": OpenObj,
+                "CloseObj": CloseObj, 
+            }
+
     config["visualize"] = visualize
     config["viz_config"] = {
         'res': viz_res
@@ -116,19 +165,26 @@ def prepare(scene_type):
     corr_objects = OBJECT_CLASSES[scene_type]["corr"]
     return detector_models, targets, corr_objects
 
-
-def get_trial(method, scene_type, target_class, scene="FloorPlan21"):
+def get_trial(method, scene_type, target_classes, scene="FloorPlan21"):
     #valscenes = tt.ithor_scene_names(scene_type, levels=range(21, 31))
     #if scene not in valscenes:
     #    raise ValueError("Only allow validation scenes.")
 
     detector_models, targets, corr_objects = prepare(scene_type)
-    if target_class not in targets:
-        raise ValueError("{} is not a valid target class".format(target_class))
+    for target_class in target_classes:
+        if target_class not in targets:
+            raise ValueError("{} is not a valid target class".format(target_class))
 
-    trial_name, config = make_POMDP_trial(method, 0, scene_type, scene, target_class,
+    manip = False
+    multi = False
+    if method == Methods.GT_HIERARCHICAL_TARGET_MANIP:
+        manip = True
+    elif method == Methods.GT_HIERARCHICAL_MULTI:
+        multi=True
+
+    trial_name, config = make_POMDP_trial(method, 0, scene_type, scene, target_classes,
                        detector_models, corr_objects=corr_objects,
-                       visualize=True)
+                       visualize=True, manip=manip, multi=multi)
     #profiler = LineProfiler()
     #trial.run()
     #return curr_trial
@@ -174,9 +230,11 @@ room_type = 'bedroom'
 goal_obj_type = 'AlarmClock'
 #goal_obj_type = 'Book'
 #goal_obj_type = 'CellPhone'
+goal_obj_types = ['AlarmClock']
 scene = 'FloorPlan304'
 
-trial_name, config = get_trial(Methods.GT_HIERARCHICAL_TARGET, room_type, goal_obj_type, scene=scene)
+#trial_name, config = get_trial(Methods.GT_HIERARCHICAL_TARGET, room_type, goal_obj_type, scene=scene)
+trial_name, config = get_trial(Methods.GT_HIERARCHICAL_MULTI, room_type, goal_obj_types, scene=scene)
 thor_controller_kwargs = get_thor_controller_kwargs(config['thor'])
 
 if 'thor_controller_kwargs' in task_sampler_params:
