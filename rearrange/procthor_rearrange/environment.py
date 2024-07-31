@@ -103,6 +103,7 @@ class RearrangeProcTHOREnvironment(RearrangeTHOREnvironment):
 
         # Overwrite cache of where objects can be interacted with
         self._interactable_positions_cache = ObjectInteractablePostionsCache()
+        self._is_proc = True
 
     def objects(self):
         with include_object_data(self.controller):
@@ -539,6 +540,7 @@ class RearrangeProcTHOREnvironment(RearrangeTHOREnvironment):
         house=None,
     ):
         new_scene = scene_name != self.scene
+        #merge_rooms = False
 
         # If any object broke, we need to reset
         if (
@@ -550,6 +552,7 @@ class RearrangeProcTHOREnvironment(RearrangeTHOREnvironment):
                 f"Forcing reset due to some objects being broken in {self.scene}"
             )
             force_reset = True
+
 
         if force_reset or new_scene:
             self.controller.reset()
@@ -731,6 +734,7 @@ class RearrangeProcTHOREnvironment(RearrangeTHOREnvironment):
         force_reset: bool = True,
         close_doors: bool = False,
         merge_rooms: bool = True,
+        #merge_rooms: bool = False,
         house: Optional[Dict[str, Any]] = None,
         raise_on_inconsistency: bool = False,
     ) -> None:

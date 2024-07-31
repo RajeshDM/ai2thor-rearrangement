@@ -40,7 +40,9 @@ from rearrange.utils import (
     get_pose_info,
     iou_box_3d,
 )
+import prior
 from rearrange_constants import IOU_THRESHOLD, OPENNESS_THRESHOLD, POSITION_DIFF_BARRIER
+from cospomdp_apps.thor.rearrange_utils import get_obj_from_asset_ID 
 
 
 class RearrangeMode(enum.Enum):
@@ -250,6 +252,7 @@ class RearrangeTHOREnvironment:
 
         # always begin in walkthrough phase
         self.shuffle_called = False
+        self._is_proc = False 
 
     def create_controller(self):
         """Create the ai2thor controller."""
@@ -962,6 +965,80 @@ class RearrangeTHOREnvironment:
             "rotation_dist": rotation_dist,
         }
 
+    def compare_poses_move_only(
+        self,
+        goal_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        curr_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+        """Compare two object poses and return where they differ.
+
+        Same as compare poses but openess set to None all the time
+        """
+        results = []
+        used_current_objects = set()
+        is_proc = True 
+
+        if type(self) == RearrangeTHOREnvironment:
+            is_proc = False
+
+        for goal_pose in goal_poses:
+            goal_type = get_obj_from_asset_ID(goal_pose['objectId'], is_proc)
+            best_iou = 0
+            best_match = None
+            best_position_dist = None
+            best_rotation_dist = None
+            
+            for cur_pose in curr_poses:
+                cur_type = get_obj_from_asset_ID(cur_pose['objectId'], is_proc)
+                cur_id = cur_pose['objectId']
+                if cur_id in used_current_objects:
+                    continue
+                
+                if cur_pose["broken"]:
+                    continue
+
+                # Check if the current object is of the required type
+                if cur_type == goal_type:
+                    position_dist = IThorEnvironment.position_dist(
+                        goal_pose["position"], cur_pose["position"]
+                    )
+                    rotation_dist = IThorEnvironment.angle_between_rotations(
+                        goal_pose["rotation"], cur_pose["rotation"]
+                    )
+                    
+                    # If the object is very close to the goal, consider it a perfect match
+                    if position_dist < 1e-2 and rotation_dist < 10.0:
+                        iou = 1.0
+                    else:
+                        try:
+                            iou = iou_box_3d(
+                                goal_pose["bounding_box"], cur_pose["bounding_box"]
+                            )
+                        except:
+                            iou = 0  # Handle any exceptions in IOU calculation
+                    
+                    # Keep track of the best match for this goal
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_match = cur_pose
+                        best_position_dist = position_dist
+                        best_rotation_dist = rotation_dist
+
+            if best_match:
+                used_current_objects.add(best_match['objectId']) 
+
+            results.append({
+                "goal_pose": goal_pose,
+                "best_match": best_match,
+                "broken": False,
+                "iou": best_iou,
+                "openness_diff": None,
+                "position_dist": best_position_dist,
+                "rotation_dist": best_rotation_dist,
+            })
+
+        return results 
+
     @classmethod
     def pose_difference_energy(
         cls,
@@ -1038,6 +1115,76 @@ class RearrangeTHOREnvironment:
         else:
             return 1.0 * (pose_diff["openness_diff"] > open_tol)
 
+    def pose_difference_energy_movements_only(
+        self,
+        goal_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        cur_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        min_iou: float = IOU_THRESHOLD,
+        open_tol: float = OPENNESS_THRESHOLD,
+        pos_barrier: float = POSITION_DIFF_BARRIER,
+    ) -> Union[float, np.ndarray]:
+        """Computes the energy between two poses.
+
+        The energy (taking values in [0:1]) between two poses provides a soft and holistic measure of how
+        far apart two poses are. If the energy is near 1 then the two poses are very dissimilar, if the energy
+        is near 1 then the two poses are nearly equal.
+
+        # Parameters
+        goal_pose : The goal pose of the object.
+        cur_pose : The current pose of the object.
+        min_iou : As the IOU between the two poses increases between [0:min_iou] the contribution to the energy
+            corresponding solely to the to the IOU decrease from 0.5 to 0 in a linear fashion.
+        open_tol: If the object is openable, then if the absolute openness difference is less than `open_tol`
+            the energy is 0. Otherwise the pose energy is 1.
+        pos_barrier: If two poses are separated by a large distance, we would like to decrease the energy as
+            the two poses are brought closer together. The `pos_barrier` controls when this energy decrease begins,
+            namely at its default value of 2.0, the contribution of the distance to
+             the energy decreases linearly from 0.5 to 0 as the distance between the two poses decreases from
+             2 meters to 0 meters.
+        """
+        results = self.compare_poses_move_only(goal_poses, cur_poses )
+        total_energy = 0.0
+
+        for result in results:
+            goal_pose = result['goal_pose']
+            best_match = result['best_match']
+            best_iou = result['iou']
+
+            if best_match is None:
+                energy = 1.0
+            else:
+                if goal_pose.get("pickupable", False):
+                    gbb = np.array(goal_pose["bounding_box"])
+                    cbb = np.array(best_match["bounding_box"])
+
+                    iou_energy = max(1 - best_iou / min_iou, 0)
+
+                    if best_iou > 0:
+                        position_dist_energy = 0.0
+                    else:
+                        min_pairwise_dist_between_corners = np.sqrt(
+                            (
+                                (
+                                    np.tile(gbb, (1, 8)).reshape(-1, 3)
+                                    - np.tile(cbb, (8, 1)).reshape(-1, 3)
+                                )
+                                ** 2
+                            ).sum(1)
+                        ).min()
+                        position_dist_energy = min(
+                            min_pairwise_dist_between_corners / pos_barrier, 1.0
+                        )
+
+                    energy = 0.5 * iou_energy + 0.5 * position_dist_energy
+                else:
+                    # Handle cases with openness_diff if needed
+                    energy = 0.0
+
+            total_energy += energy
+            result['energy'] = energy
+
+        return results, total_energy
+        
     @classmethod
     def are_poses_equal(
         cls,
@@ -1085,10 +1232,62 @@ class RearrangeTHOREnvironment:
                     f" equal if one is broken object ({goal_pose} v.s. {cur_pose})."
                 )
 
-        pose_diff = cls.compare_poses(goal_pose=goal_pose, cur_pose=cur_pose)
+        pose_diff = cls.compare_poses_move_only(goal_pose=goal_pose, cur_pose=cur_pose)
 
         return (pose_diff["iou"] is None or pose_diff["iou"] > min_iou) and (
             pose_diff["openness_diff"] is None or pose_diff["openness_diff"] <= open_tol
+        )
+
+    @classmethod
+    def are_poses_equal_movements(
+        cls,
+        goal_pose: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        cur_pose: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        min_iou: float = 0.5,
+        open_tol: float = 0.2,
+        treat_broken_as_unequal: bool = False,
+    ) -> Union[bool, np.ndarray]:
+        """Determine if two object poses are equal (up to allowed error).
+
+        The `goal_pose` must not have the object as broken.
+
+        # Parameters
+        goal_pose : The goal pose of the object.
+        cur_pose : The current pose of the object.
+        min_iou : If the two objects are pickupable objects, they are considered equal if their IOU is `>=min_iou`.
+        open_tol: If the object is openable and not pickupable, then the poses are considered equal if the absolute
+            openness difference is less than `open_tol`.
+        treat_broken_as_unequal : If `False` an exception will be thrown if the `cur_pose` is broken. If `True`, then
+             if `cur_pose` is broken this function will always return `False`.
+        """
+        if isinstance(goal_pose, Sequence):
+            assert isinstance(cur_pose, Sequence)
+            return np.array(
+                [
+                    cls.are_poses_equal_movements(
+                        goal_pose=p0,
+                        cur_pose=p1,
+                        min_iou=min_iou,
+                        open_tol=open_tol,
+                        treat_broken_as_unequal=treat_broken_as_unequal,
+                    )
+                    for p0, p1 in zip(goal_pose, cur_pose)
+                ]
+            )
+        assert not goal_pose["broken"]
+
+        if cur_pose["broken"]:
+            if treat_broken_as_unequal:
+                return False
+            else:
+                raise RuntimeError(
+                    f"Cannot determine if poses of two objects are"
+                    f" equal if one is broken object ({goal_pose} v.s. {cur_pose})."
+                )
+
+        pose_diff = cls.compare_poses_move_only(goal_pose=goal_pose, cur_pose=cur_pose)
+
+        return (pose_diff["iou"] is None or pose_diff["iou"] > min_iou) and (
         )
 
     @property
@@ -1104,6 +1303,22 @@ class RearrangeTHOREnvironment:
         """
         return all(
             cp["broken"] or self.are_poses_equal(goal_pose=gp, cur_pose=cp)
+            for _, gp, cp in zip(*self.poses)
+        )
+
+    @property
+    def all_rearranged_or_broken_movements(self):
+        """Return if every object is simultaneously broken or in its correct
+        pose.
+
+        The unshuffle agent can make no more progress on its task in the
+        case that that every object is either (1) in its correct
+        position or (2) broken so that it can never be placed in its
+        correct position. This function simply returns whether this is
+        the case.
+        """
+        return all(
+            cp["broken"] or self.are_poses_equal_movements(goal_pose=gp, cur_pose=cp)
             for _, gp, cp in zip(*self.poses)
         )
 

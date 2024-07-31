@@ -320,6 +320,85 @@ class UnshuffleTask(AbstractRearrangeTask):
 
         return metrics
 
+    def oo_rearrange_metrics(self) -> Dict[str, Any]:
+        if not self.is_done():
+            return {}
+
+        env = self.unshuffle_env
+        ips, gps, cps = env.poses
+
+        start_energies = self.start_energies
+        end_energies = env.pose_difference_energy_movements_only(gps, cps)
+        start_energy = start_energies.sum()
+        end_energy = end_energies.sum()
+
+        start_misplaceds = start_energies > 0.0
+        end_misplaceds = end_energies > 0.0
+
+        num_broken = sum(cp["broken"] for cp in cps)
+        num_initially_misplaced = start_misplaceds.sum()
+        num_fixed = num_initially_misplaced - (start_misplaceds & end_misplaceds).sum()
+        num_newly_misplaced = (end_misplaceds & np.logical_not(start_misplaceds)).sum()
+
+        prop_fixed = (
+            1.0 if num_initially_misplaced == 0 else num_fixed / num_initially_misplaced
+        )
+        metrics = {
+            **super().metrics(),
+            **{
+                "start_energy": start_energy,
+                "end_energy": end_energy,
+                "success": float(end_energy == 0),
+                "prop_fixed": prop_fixed,
+                "prop_fixed_strict": float((num_newly_misplaced == 0) * prop_fixed),
+                "num_misplaced": end_misplaceds.sum(),
+                "num_newly_misplaced": num_newly_misplaced.sum(),
+                "num_initially_misplaced": num_initially_misplaced,
+                "num_fixed": num_fixed.sum(),
+                "num_broken": num_broken,
+            },
+        }
+
+        try:
+            change_energies = env.pose_difference_energy_movements_only(ips, cps)
+            change_energy = change_energies.sum()
+            changeds = change_energies > 0.0
+            metrics["change_energy"] = change_energy
+            metrics["num_changed"] = changeds.sum()
+        except AssertionError as _:
+            pass
+
+        if num_initially_misplaced > 0:
+            metrics["prop_misplaced"] = end_misplaceds.sum() / num_initially_misplaced
+
+        if start_energy > 0:
+            metrics["energy_prop"] = end_energy / start_energy
+
+        task_info = metrics["task_info"]
+        task_info["scene"] = self.unshuffle_env.scene
+        task_info["index"] = self.unshuffle_env.current_task_spec.metrics.get("index")
+        task_info["stage"] = self.unshuffle_env.current_task_spec.stage
+        del metrics["task_info"]
+
+        if self.task_spec_in_metrics:
+            task_info["task_spec"] = {**self.unshuffle_env.current_task_spec.__dict__}
+            task_info["poses"] = self.unshuffle_env.poses
+            task_info["gps_vs_cps"] = self.unshuffle_env.compare_poses_move_only(gps, cps)
+            task_info["ips_vs_cps"] = self.unshuffle_env.compare_poses_move_only(ips, cps)
+            task_info["gps_vs_ips"] = self.unshuffle_env.compare_poses_move_only(gps, ips)
+
+        task_info["unshuffle_actions"] = self.actions_taken
+        task_info["unshuffle_action_successes"] = self.actions_taken_success
+        task_info["unique_id"] = self.unshuffle_env.current_task_spec.unique_id
+
+            
+        metrics = {
+            "task_info": task_info,
+            **{f"unshuffle/{k}": v for k, v in metrics.items()},
+        }
+
+        return metrics
+
     def class_action_names(self, **kwargs) -> Tuple[str, ...]:
         raise RuntimeError("This should not be called, use `action_names` instead.")
 

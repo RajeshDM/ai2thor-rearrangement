@@ -12,6 +12,8 @@ class Houses:
     ):
         if valid_houses_file is None:
             self._data = prior.load_dataset("procthor-10k", revision=revision)
+            #self._data = prior.load_dataset("procthor-10k")
+            #self._data = prior.load_dataset('rearrangement_episodes', revision=revision)
             self._mode = "train"
         else:
             get_logger().info(f"Using valid_houses_file {valid_houses_file}")

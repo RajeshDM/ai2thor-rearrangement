@@ -6,6 +6,10 @@ STARTER_DATA_DIR = os.path.join(
     os.path.abspath(os.path.dirname(Path(__file__))), "../../data", "2022procthor",
 )
 
+STARTER_DATA_DIR_2 = os.path.join(
+    os.path.abspath(os.path.dirname(Path(__file__))), "../../data", "2022procthor_new",
+)
+
 PROCTHOR_COMMIT_ID = "90eac925dc750818890069e3131f899998dc58b4"
 #PROCTHOR_COMMIT_ID = "a9ccb07faf771377c9ff1615bfe7e0ad01968663"
 

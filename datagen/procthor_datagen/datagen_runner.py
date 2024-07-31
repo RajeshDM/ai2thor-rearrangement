@@ -39,12 +39,13 @@ from rearrange.procthor_rearrange.environment import (
 )
 from rearrange.utils import extract_obj_data
 
-NUM_TRAIN_UNSEEN_EPISODES = 1_000  # 1 episode per scene
-NUM_TRAIN_SCENES = 10_000  # N episodes per scene
-NUM_VALID_SCENES = 1_000  # 10 episodes per scene
-NUM_TEST_SCENES = 1_000  # 1 episode per scene
+NUM_TRAIN_UNSEEN_EPISODES = 10  # 1 episode per scene
+NUM_TRAIN_SCENES = 100  # N episodes per scene
+NUM_VALID_SCENES = 10  # 10 episodes per scene
+NUM_TEST_SCENES = 10  # 1 episode per scene
 
 MAX_ROOMS_IN_HOUSE = 2
+MIN_ROOMS_IN_HOUSE = 1
 
 MAX_POS_IN_HOUSE = 700
 
@@ -770,7 +771,7 @@ def generate_rearrangement_for_scene(
 
     if limits is None:
         print(f"Re-computing limnits for Scene {stage} {scene} {reuse_i}??????")
-        if not (0 < env.num_rooms(scene) <= MAX_ROOMS_IN_HOUSE):
+        if not (MIN_ROOMS_IN_HOUSE <= env.num_rooms(scene) <= MAX_ROOMS_IN_HOUSE):
             print(f"{scene} has {env.num_rooms(scene)} rooms. Skipping.")
             return None
 
@@ -1089,7 +1090,7 @@ def find_limits_for_scene(
 
     print(f"Scene {stage} {scene} limits")
 
-    if not (0 < env.num_rooms(scene) <= MAX_ROOMS_IN_HOUSE):
+    if not (MIN_ROOMS_IN_HOUSE <= env.num_rooms(scene) <= MAX_ROOMS_IN_HOUSE):
         print(f"{scene} has {env.num_rooms(scene)} rooms. Skipping.")
         return None
 
@@ -1145,7 +1146,7 @@ class RearrangeProcTHORDatagenWorker(Worker):
             force_cache_reset=True,
             controller_kwargs={
                 "scene": "Procedural",
-                "x_display": f"0.{self.gpu}" if self.gpu is not None else None,
+                #"x_display": f"0.{self.gpu}" if self.gpu is not None else None,
             },
         )
 

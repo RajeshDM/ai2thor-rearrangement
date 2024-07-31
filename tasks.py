@@ -389,6 +389,7 @@ def make_valid_houses_file(
 @task
 def make_procthor_mini_train(
     ctx,
+    #stats_file="data/2022procthor/procthor_train_scene_stats.json",
     stats_file="data/2022procthor/procthor_train_scene_stats.json",
     chosen_scenes=2500,
     seed=12345,
