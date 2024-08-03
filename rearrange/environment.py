@@ -39,6 +39,7 @@ from rearrange.utils import (
     execute_action,
     get_pose_info,
     iou_box_3d,
+    iou_from_poses,
 )
 import prior
 from rearrange_constants import IOU_THRESHOLD, OPENNESS_THRESHOLD, POSITION_DIFF_BARRIER
@@ -969,6 +970,8 @@ class RearrangeTHOREnvironment:
         self,
         goal_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
         curr_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        start_poses : Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        obj_goal_poses : Dict[str, Dict[str, Any]],
     ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         """Compare two object poses and return where they differ.
 
@@ -976,68 +979,72 @@ class RearrangeTHOREnvironment:
         """
         results = []
         used_current_objects = set()
-        is_proc = True 
-
-        if type(self) == RearrangeTHOREnvironment:
-            is_proc = False
+        fixed = set()
+        misplaced = set()
+        newly_misplaced = set()
 
         for goal_pose in goal_poses:
-            goal_type = get_obj_from_asset_ID(goal_pose['objectId'], is_proc)
+            goal_type = goal_pose['type']
             best_iou = 0
             best_match = None
-            best_position_dist = None
-            best_rotation_dist = None
+
+            goal_pos = goal_pose["position"]
+            if goal_pos not in obj_goal_poses.values():
+                continue
             
             for cur_pose in curr_poses:
-                cur_type = get_obj_from_asset_ID(cur_pose['objectId'], is_proc)
+                cur_type = cur_pose['type']
                 cur_id = cur_pose['objectId']
                 if cur_id in used_current_objects:
                     continue
                 
                 if cur_pose["broken"]:
                     continue
-
                 # Check if the current object is of the required type
                 if cur_type == goal_type:
-                    position_dist = IThorEnvironment.position_dist(
-                        goal_pose["position"], cur_pose["position"]
-                    )
-                    rotation_dist = IThorEnvironment.angle_between_rotations(
-                        goal_pose["rotation"], cur_pose["rotation"]
-                    )
-                    
-                    # If the object is very close to the goal, consider it a perfect match
-                    if position_dist < 1e-2 and rotation_dist < 10.0:
-                        iou = 1.0
-                    else:
-                        try:
-                            iou = iou_box_3d(
-                                goal_pose["bounding_box"], cur_pose["bounding_box"]
-                            )
-                        except:
-                            iou = 0  # Handle any exceptions in IOU calculation
-                    
+                    iou = iou_from_poses(goal_pose, cur_pose)
                     # Keep track of the best match for this goal
                     if iou > best_iou:
                         best_iou = iou
                         best_match = cur_pose
-                        best_position_dist = position_dist
-                        best_rotation_dist = rotation_dist
 
             if best_match:
                 used_current_objects.add(best_match['objectId']) 
+            else :
+                misplaced.add(goal_pose['objectId'])
 
             results.append({
                 "goal_pose": goal_pose,
                 "best_match": best_match,
                 "broken": False,
-                "iou": best_iou,
-                "openness_diff": None,
-                "position_dist": best_position_dist,
-                "rotation_dist": best_rotation_dist,
+                "best_iou": best_iou,
             })
 
-        return results 
+            if best_iou > 0.97:
+                fixed.add(goal_pose['objectId'])
+
+        for goal_pose in goal_poses:
+
+            goal_pos = goal_pose["position"]
+            if goal_pose['objectId'] in used_current_objects:
+                continue
+
+            start_pose = [pose for pose in start_poses if pose['objectId'] == goal_pose['objectId']][0]
+            curr_pose = [pose for pose in curr_poses if pose['objectId'] == goal_pose['objectId']][0]
+
+            iou = iou_from_poses(start_pose, curr_pose)
+
+            if iou < 0.99 :
+                newly_misplaced.add(goal_pose['objectId'])
+
+            results.append({
+                "goal_pose": start_pose,
+                "best_match": curr_pose,
+                "broken": False,
+                "best_iou": iou,
+            })
+
+        return results, fixed, misplaced, newly_misplaced 
 
     @classmethod
     def pose_difference_energy(
@@ -1119,6 +1126,8 @@ class RearrangeTHOREnvironment:
         self,
         goal_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
         cur_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        start_poses: Union[Dict[str, Any], Sequence[Dict[str, Any]]],
+        obj_goal_poses : Dict[str, Dict[str, Any]],
         min_iou: float = IOU_THRESHOLD,
         open_tol: float = OPENNESS_THRESHOLD,
         pos_barrier: float = POSITION_DIFF_BARRIER,
@@ -1142,13 +1151,14 @@ class RearrangeTHOREnvironment:
              the energy decreases linearly from 0.5 to 0 as the distance between the two poses decreases from
              2 meters to 0 meters.
         """
-        results = self.compare_poses_move_only(goal_poses, cur_poses )
+        results, fixed, misplaced , newly_misplaced = self.compare_poses_move_only(goal_poses, cur_poses , start_poses, obj_goal_poses)
         total_energy = 0.0
+        energies = []
 
         for result in results:
             goal_pose = result['goal_pose']
             best_match = result['best_match']
-            best_iou = result['iou']
+            best_iou = result['best_iou']
 
             if best_match is None:
                 energy = 1.0
@@ -1182,8 +1192,9 @@ class RearrangeTHOREnvironment:
 
             total_energy += energy
             result['energy'] = energy
+            energies.append(energy)
 
-        return results, total_energy
+        return np.array(energies), fixed, misplaced, newly_misplaced 
         
     @classmethod
     def are_poses_equal(
@@ -1232,7 +1243,7 @@ class RearrangeTHOREnvironment:
                     f" equal if one is broken object ({goal_pose} v.s. {cur_pose})."
                 )
 
-        pose_diff = cls.compare_poses_move_only(goal_pose=goal_pose, cur_pose=cur_pose)
+        pose_diff = cls.compare_poses(goal_pose=goal_pose, cur_pose=cur_pose)
 
         return (pose_diff["iou"] is None or pose_diff["iou"] > min_iou) and (
             pose_diff["openness_diff"] is None or pose_diff["openness_diff"] <= open_tol

@@ -396,6 +396,26 @@ def iou_box_3d(b1: Sequence[Sequence[float]], b2: Sequence[Sequence[float]]) -> 
 
     return intersect_vol / (b1_vol + b2_vol - intersect_vol)
 
+def iou_from_poses(goal_pose, cur_pose):
+    position_dist = IThorEnvironment.position_dist(
+        goal_pose["position"], cur_pose["position"]
+    )
+    rotation_dist = IThorEnvironment.angle_between_rotations(
+        goal_pose["rotation"], cur_pose["rotation"]
+    )
+    
+    # If the object is very close to the goal, consider it a perfect match
+    if position_dist < 1e-2 and rotation_dist < 10.0:
+        iou = 1.0
+    else:
+        try:
+            iou = iou_box_3d(
+                goal_pose["bounding_box"], cur_pose["bounding_box"]
+            )
+        except:
+            iou = 0  # Handle any exceptions in IOU calculation
+    
+    return iou
 
 class PoseMismatchError(Exception):
     pass
