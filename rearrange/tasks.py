@@ -13,7 +13,7 @@ import gym.spaces
 import numpy as np
 import stringcase
 
-from allenact.base_abstractions.misc import RLStepResult, RLPOMDPStepResult
+from allenact.base_abstractions.misc import RLStepResult 
 from allenact.base_abstractions.sensor import SensorSuite
 from allenact.base_abstractions.task import Task, TaskSampler
 from allenact.utils.misc_utils import md5_hash_str_as_int
@@ -321,94 +321,108 @@ class UnshuffleTask(AbstractRearrangeTask):
         return metrics
 
     def oo_rearrange_metrics(self, obj_goal_poses) -> Dict[str, Any]:
-        if not self.is_done():
-            return {}
+        try : 
+            #if not self.is_done():
+            #    return {}
 
-        env = self.unshuffle_env
-        ips, gps, cps = env.poses
+            env = self.unshuffle_env
+            ips, gps, cps = env.poses
 
-        start_energies, _ , _, initial_misplaced = env.pose_difference_energy_movements_only(gps, gps, ips, 
-                                                                 obj_goal_poses)
-                                                                 
-        end_energies, fixed, final_misplaced, newly_misplaced  = env.pose_difference_energy_movements_only(gps, cps, ips, 
-                                                                 obj_goal_poses)
-        start_energy = start_energies.sum()
-        end_energy = end_energies.sum()
+            start_energies, _ , _, initial_misplaced = env.pose_difference_energy_movements_only(gps, gps, ips, 
+                                                                    {})
+                                                                    
+            end_energies, fixed, final_misplaced, newly_misplaced  = env.pose_difference_energy_movements_only(gps, cps, ips, 
+                                                                    obj_goal_poses)
+            start_energy = start_energies.sum()
+            end_energy = end_energies.sum()
 
-        #start_misplaceds = start_energies > 0.0
-        #end_misplaceds = end_energies > 0.0
-        #num_initially_misplaced = start_misplaceds.sum()
-        #num_fixed = num_initially_misplaced - (start_misplaceds & end_misplaceds).sum()
-        #num_newly_misplaced = (end_misplaceds & np.logical_not(start_misplaceds)).sum()
+            num_broken = sum(cp["broken"] for cp in cps)
+            num_initially_misplaced = len(initial_misplaced)
+            num_fixed = len(fixed) 
+            num_newly_misplaced = len(newly_misplaced)
+            num_final_misplaced = len(final_misplaced)
 
-        num_broken = sum(cp["broken"] for cp in cps)
-        num_initially_misplaced = len(initial_misplaced)
-        num_fixed = len(fixed) 
-        num_newly_misplaced = len(newly_misplaced)
-        num_final_misplaced = len(final_misplaced)
+            prop_fixed = (
+                1.0 if num_initially_misplaced == 0 else num_fixed / num_initially_misplaced
+            )
+            metrics = {
+                **super().metrics(),
+                **{
+                    "start_energy": start_energy,
+                    "end_energy": end_energy,
+                    "success": float(end_energy == 0),
+                    "prop_fixed": prop_fixed,
+                    "prop_fixed_strict": float((num_newly_misplaced == 0) * prop_fixed),
+                    "num_misplaced": num_final_misplaced,
+                    "obj_misplaced" : list(final_misplaced) ,
+                    "num_newly_misplaced": num_newly_misplaced,
+                    "obj_newly_misplaced" : list(newly_misplaced),
+                    #"num_initially_misplaced": num_initially_misplaced,
+                    #"obj_initially_misplaced" : list(initial_misplaced),
+                    "num_initially_misplaced": len(obj_goal_poses),
+                    "obj_initially_misplaced" : list(obj_goal_poses.keys()),
+                    "num_fixed": num_fixed,
+                    "obj_fixed": list(fixed),
+                    "num_broken": num_broken,
+                },
+            }
 
-        prop_fixed = (
-            1.0 if num_initially_misplaced == 0 else num_fixed / num_initially_misplaced
-        )
-        metrics = {
-            **super().metrics(),
-            **{
-                "start_energy": start_energy,
-                "end_energy": end_energy,
-                "success": float(end_energy == 0),
-                "prop_fixed": prop_fixed,
-                "prop_fixed_strict": float((num_newly_misplaced == 0) * prop_fixed),
-                "num_misplaced": num_final_misplaced,
-                "num_newly_misplaced": num_newly_misplaced,
-                "num_initially_misplaced": num_initially_misplaced,
-                "num_fixed": num_fixed,
-                "num_broken": num_broken,
-            },
-        }
+            if num_newly_misplaced > 0:
+                metrics["prop_misplaced"] = num_final_misplaced / num_initially_misplaced
 
-        try:
-            change_energies = env.pose_difference_energy_movements_only(ips, cps)
-            change_energy = change_energies.sum()
-            changeds = change_energies > 0.0
-            metrics["change_energy"] = change_energy
-            metrics["num_changed"] = changeds.sum()
-        except AssertionError as _:
-            pass
+            if start_energy > 0:
+                metrics["energy_prop"] = end_energy / start_energy
 
-        #if num_initially_misplaced > 0:
-        #    metrics["prop_misplaced"] = end_misplaceds.sum() / num_initially_misplaced
-        if num_newly_misplaced > 0:
-            metrics["prop_misplaced"] = num_final_misplaced / num_initially_misplaced
+            task_info = metrics["task_info"]
+            task_info["scene"] = self.unshuffle_env.scene
+            task_info["index"] = self.unshuffle_env.current_task_spec.metrics.get("index")
+            task_info["stage"] = self.unshuffle_env.current_task_spec.stage
+            del metrics["task_info"]
 
-        if start_energy > 0:
-            metrics["energy_prop"] = end_energy / start_energy
+            task_info["unshuffle_actions"] = self.actions_taken
+            task_info["unshuffle_action_successes"] = self.actions_taken_success
+            task_info["unique_id"] = self.unshuffle_env.current_task_spec.unique_id
 
-        task_info = metrics["task_info"]
-        task_info["scene"] = self.unshuffle_env.scene
-        task_info["index"] = self.unshuffle_env.current_task_spec.metrics.get("index")
-        task_info["stage"] = self.unshuffle_env.current_task_spec.stage
-        del metrics["task_info"]
+            blocked = [] 
+            goal_types = {typ[:-2] for typ in obj_goal_poses}
+            blocked_min = 0.15
+            for start_pose in ips :
+                for goal_pose in gps: 
+                    if start_pose['objectId'] == goal_pose['objectId']:
+                        continue
+                    g_pos = goal_pose['position']
+                    s_pos = start_pose['position']
 
-        '''
-        if self.task_spec_in_metrics:
-            task_info["task_spec"] = {**self.unshuffle_env.current_task_spec.__dict__}
-            task_info["poses"] = self.unshuffle_env.poses
-            task_info["gps_vs_cps"] = self.unshuffle_env.compare_poses_move_only(gps, cps)
-            task_info["ips_vs_cps"] = self.unshuffle_env.compare_poses_move_only(ips, cps)
-            task_info["gps_vs_ips"] = self.unshuffle_env.compare_poses_move_only(gps, ips)
-        '''
+                    if goal_pose['type'] not in goal_types or start_pose['type'] not in goal_types :
+                        continue
 
-        task_info["unshuffle_actions"] = self.actions_taken
-        task_info["unshuffle_action_successes"] = self.actions_taken_success
-        task_info["unique_id"] = self.unshuffle_env.current_task_spec.unique_id
-
+                    if abs(g_pos['x']-s_pos['x']) < blocked_min and abs(g_pos['y']-s_pos['y']) < blocked_min  and abs(g_pos['z']-s_pos['z']) < blocked_min :
+                        blocked.append((start_pose['objectId'],goal_pose['objectId']))
+                        print (start_pose)
+                        print (goal_pose)
+            task_info['obj_blocked'] = blocked
+            task_info['num_blocked'] = len(blocked)
             
-        metrics = {
-            "task_info": task_info,
-            **{f"unshuffle/{k}": v for k, v in metrics.items()},
-        }
+            swap_considered = [] 
+            swap = 0
+            for elements in blocked :
+                if (elements[1],elements[0]) in blocked and (elements[1],elements[0])  not in swap_considered:
+                    #print ((elements[1],elements[0]) )
+                    swap_considered.append(elements )
+                    swap += 1
 
-        return metrics
+            task_info['num_swap'] = swap
+            task_info['obj_swap'] = swap_considered
+
+            metrics = {
+                "task_info": task_info,
+                **{f"unshuffle/{k}": v for k, v in metrics.items()},
+            }
+
+            return metrics
+
+        except Exception as _ :
+            raise ValueError("Metrics computation error")
 
     def class_action_names(self, **kwargs) -> Tuple[str, ...]:
         raise RuntimeError("This should not be called, use `action_names` instead.")

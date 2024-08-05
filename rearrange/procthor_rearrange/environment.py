@@ -157,8 +157,13 @@ class RearrangeProcTHOREnvironment(RearrangeTHOREnvironment):
 
             agent = event.metadata["agent"]
             goal_pose = self.obj_id_to_walkthrough_start_pose[held_obj["objectId"]]
+
+            goal_pose['position'] = self.curr_held_obj_drop_pose
+            goal_pose['rotation'] = self.curr_held_obj_drop_rot
             goal_pos = goal_pose["position"]
             goal_rot = goal_pose["rotation"]
+            #goal_pos = self.curr_held_obj_drop_pose
+            #goal_rot = self.curr_held_obj_drop_rot
             good_positions_to_drop_from = self._interactable_positions_cache.get(
                 scene_name=self.scene,
                 obj={**held_obj, **{"position": goal_pos, "rotation": goal_rot},},

@@ -254,6 +254,8 @@ class RearrangeTHOREnvironment:
         # always begin in walkthrough phase
         self.shuffle_called = False
         self._is_proc = False 
+        self.curr_held_obj_drop_pose = None
+        self.curr_held_obj_drop_rot = None
 
     def create_controller(self):
         """Create the ai2thor controller."""
@@ -776,8 +778,12 @@ class RearrangeTHOREnvironment:
 
             agent = event.metadata["agent"]
             goal_pose = self.obj_name_to_walkthrough_start_pose[held_obj["name"]]
+            goal_pose['position'] = self.curr_held_obj_drop_pose
+            goal_pose['rotation'] = self.curr_held_obj_drop_rot
             goal_pos = goal_pose["position"]
             goal_rot = goal_pose["rotation"]
+            #goal_pos = self.curr_held_obj_drop_pose
+            #goal_rot = self.curr_held_obj_drop_rot
             good_positions_to_drop_from = self._interactable_positions_cache.get(
                 scene_name=self.last_event.metadata["sceneName"],
                 obj={**held_obj, **{"position": goal_pos, "rotation": goal_rot},},
