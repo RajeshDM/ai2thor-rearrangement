@@ -320,7 +320,7 @@ class UnshuffleTask(AbstractRearrangeTask):
 
         return metrics
 
-    def oo_rearrange_metrics(self, obj_goal_poses) -> Dict[str, Any]:
+    def oo_rearrange_metrics(self, obj_goal_poses, impossible_objs) -> Dict[str, Any]:
         try : 
             #if not self.is_done():
             #    return {}
@@ -337,7 +337,7 @@ class UnshuffleTask(AbstractRearrangeTask):
             end_energy = end_energies.sum()
 
             num_broken = sum(cp["broken"] for cp in cps)
-            num_initially_misplaced = len(initial_misplaced)
+            num_initially_misplaced = len(obj_goal_poses)
             num_fixed = len(fixed) 
             num_newly_misplaced = len(newly_misplaced)
             num_final_misplaced = len(final_misplaced)
@@ -364,6 +364,8 @@ class UnshuffleTask(AbstractRearrangeTask):
                     "num_fixed": num_fixed,
                     "obj_fixed": list(fixed),
                     "num_broken": num_broken,
+                    "impossible_objs" : impossible_objs,
+                    "num_impossible_objs" : len(impossible_objs),
                 },
             }
 
