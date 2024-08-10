@@ -1183,6 +1183,7 @@ class RearrangeProcTHORDatagenWorker(Worker):
                 env=self.env,
                 scene_reuse_count=scene_reuse_count,
                 object_types_to_not_move=OBJECT_TYPES_TO_NOT_MOVE,
+                #max_obj_rearrangements_per_scene=20,
                 obj_name_to_avoid_positions=obj_name_to_avoid_positions,
                 reuse_i=reuse_i,
                 stage=stage,

@@ -11,6 +11,7 @@ class Houses:
         self, revision="rearrangement-2022", valid_houses_file=None,
     ):
         if valid_houses_file is None:
+            revision = '5647c42760bafcc2b06704cbc87745dc41b9d2a8'
             self._data = prior.load_dataset("procthor-10k", revision=revision)
             #self._data = prior.load_dataset("procthor-10k")
             #self._data = prior.load_dataset('rearrangement_episodes', revision=revision)
