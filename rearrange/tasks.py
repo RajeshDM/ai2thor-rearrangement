@@ -400,8 +400,6 @@ class UnshuffleTask(AbstractRearrangeTask):
 
                     if abs(g_pos['x']-s_pos['x']) < blocked_min and abs(g_pos['y']-s_pos['y']) < blocked_min  and abs(g_pos['z']-s_pos['z']) < blocked_min :
                         blocked.append((start_pose['objectId'],goal_pose['objectId']))
-                        print (start_pose)
-                        print (goal_pose)
             task_info['obj_blocked'] = blocked
             task_info['num_blocked'] = len(blocked)
             
