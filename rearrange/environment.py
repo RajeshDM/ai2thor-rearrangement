@@ -44,6 +44,7 @@ from rearrange.utils import (
 import prior
 from rearrange_constants import IOU_THRESHOLD, OPENNESS_THRESHOLD, POSITION_DIFF_BARRIER
 from cospomdp_apps.thor.rearrange_utils import get_obj_from_asset_ID 
+from ai2thor.platform import CloudRendering
 
 
 class RearrangeMode(enum.Enum):
@@ -256,6 +257,7 @@ class RearrangeTHOREnvironment:
         self._is_proc = False 
         self.curr_held_obj_drop_pose = None
         self.curr_held_obj_drop_rot = None
+        self.is_proc = False
 
     def create_controller(self):
         """Create the ai2thor controller."""
@@ -265,6 +267,7 @@ class RearrangeTHOREnvironment:
         ), "Either controller_kwargs must contain either both of width/height or neither."
         self._controller_kwargs["width"] = self._controller_kwargs.get("width", 300)
         self._controller_kwargs["height"] = self._controller_kwargs.get("height", 300)
+        self._controller_kwargs['platform'] = CloudRendering
 
         controller = ai2thor.controller.Controller(
             **{
@@ -988,6 +991,10 @@ class RearrangeTHOREnvironment:
         fixed = set()
         misplaced = set()
         newly_misplaced = set()
+        if self.is_proc  :
+            identifying_string = "objectId"
+        else :
+            identifying_string = "name"
 
         for goal_pose in goal_poses:
             goal_type = goal_pose['type']
@@ -1000,7 +1007,7 @@ class RearrangeTHOREnvironment:
             
             for cur_pose in curr_poses:
                 cur_type = cur_pose['type']
-                cur_id = cur_pose['objectId']
+                cur_id = cur_pose[identifying_string]
                 if cur_id in used_current_objects:
                     continue
                 
@@ -1015,9 +1022,9 @@ class RearrangeTHOREnvironment:
                         best_match = cur_pose
 
             if best_match:
-                used_current_objects.add(best_match['objectId']) 
+                used_current_objects.add(best_match[identifying_string]) 
             else :
-                misplaced.add(goal_pose['objectId'])
+                misplaced.add(goal_pose[identifying_string])
 
             results.append({
                 "goal_pose": goal_pose,
@@ -1027,21 +1034,21 @@ class RearrangeTHOREnvironment:
             })
 
             if best_iou > 0.97:
-                fixed.add(goal_pose['objectId'])
+                fixed.add(goal_pose[identifying_string])
 
         for goal_pose in goal_poses:
 
             goal_pos = goal_pose["position"]
-            if goal_pose['objectId'] in used_current_objects:
+            if goal_pose[identifying_string] in used_current_objects:
                 continue
 
-            start_pose = [pose for pose in start_poses if pose['objectId'] == goal_pose['objectId']][0]
-            curr_pose = [pose for pose in curr_poses if pose['objectId'] == goal_pose['objectId']][0]
+            start_pose = [pose for pose in start_poses if pose[identifying_string] == goal_pose[identifying_string]][0]
+            curr_pose = [pose for pose in curr_poses if pose[identifying_string] == goal_pose[identifying_string]][0]
 
             iou = iou_from_poses(start_pose, curr_pose)
 
             if iou < 0.99 :
-                newly_misplaced.add(goal_pose['objectId'])
+                newly_misplaced.add(goal_pose[identifying_string])
 
             results.append({
                 "goal_pose": start_pose,
