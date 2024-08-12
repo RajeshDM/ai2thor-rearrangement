@@ -371,9 +371,13 @@ class UnshuffleTask(AbstractRearrangeTask):
 
             if num_newly_misplaced > 0:
                 metrics["prop_misplaced"] = num_final_misplaced / num_initially_misplaced
+            else :
+                metrics["prop_misplaced"] = 0
 
             if start_energy > 0:
                 metrics["energy_prop"] = end_energy / start_energy
+            else :
+                metrics["energy_prop"] = 0
 
             task_info = metrics["task_info"]
             task_info["scene"] = self.unshuffle_env.scene
@@ -1004,6 +1008,7 @@ class RearrangeTaskSpecIterable:
         new_task_spec_dict = self.preprocess_spec_dict(
             self.task_spec_dicts_for_current_scene.pop()
         )
+
         if "scene" not in new_task_spec_dict:
             new_task_spec_dict["scene"] = self.current_scene
         else:
