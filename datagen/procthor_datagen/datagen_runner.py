@@ -32,21 +32,21 @@ from datagen.procthor_datagen.datagen_utils import (
     mapping_counts,
 )
 from utils.multiprocessing_utils import Manager, Worker, get_logger
-from rearrange.procthor_rearrange.constants import STARTER_DATA_DIR
+from rearrange.procthor_rearrange.constants import STARTER_DATA_DIR_2 as STARTER_DATA_DIR
 from rearrange.procthor_rearrange.environment import (
     RearrangeProcTHOREnvironment,
     RearrangeTaskSpec,
 )
 from rearrange.utils import extract_obj_data
 
-NUM_TRAIN_UNSEEN_EPISODES = 10  # 1 episode per scene
-NUM_TRAIN_SCENES = 100  # N episodes per scene
-NUM_VALID_SCENES = 10  # 10 episodes per scene
-NUM_TEST_SCENES = 10  # 1 episode per scene
+NUM_TRAIN_UNSEEN_EPISODES = 1  # 1 episode per scene
+NUM_TRAIN_SCENES = 10  # N episodes per scene
+NUM_VALID_SCENES = 1  # 10 episodes per scene
+NUM_TEST_SCENES = 1  # 1 episode per scene
 
 MAX_ROOMS_IN_HOUSE = 2
 MIN_ROOMS_IN_HOUSE = 1
-
+MIN_OBJECTS_TO_MOVE  = 10
 MAX_POS_IN_HOUSE = 700
 
 MAX_TRIES = 40
@@ -239,6 +239,10 @@ def get_scene_limits(
             f"Less than 2 receptacles in some room(s) in {scene}: {num_receps_per_room}"
         )
         return None
+
+    if len(pickupable_objects) < MIN_OBJECTS_TO_MOVE : 
+        print (f"num of pickupable less than min required objects {len(pickupable_objects)} ,{MIN_OBJECTS_TO_MOVE}")
+        return None 
 
     return dict(
         room_openables={**room_to_openable_ids},  # in each room
@@ -744,7 +748,7 @@ def generate_rearrangement_for_scene(
     env: RearrangeProcTHOREnvironment,
     scene_reuse_count: int,
     object_types_to_not_move: Set[str],
-    max_obj_rearrangements_per_scene: int = 5,
+    max_obj_rearrangements_per_scene: int = MIN_OBJECTS_TO_MOVE,
     obj_name_to_avoid_positions: Optional[Dict[str, np.ndarray]] = None,
     force_visible: bool = True,
     place_stationary: bool = True,
@@ -835,9 +839,13 @@ def generate_rearrangement_for_scene(
     else:
         num_objs_to_open = scene_has_openable * (reuse_i % 2)
 
+    '''
     num_objs_to_move = (1 - num_objs_to_open) + math.floor(
         max_obj_rearrangements_per_scene * (reuse_i / scene_reuse_count)
     )
+    '''
+    num_objs_to_open = 0
+    num_objs_to_move = max_obj_rearrangements_per_scene
     position_count_offset = 0
 
     if num_objs_to_open > 0:
@@ -1183,7 +1191,7 @@ class RearrangeProcTHORDatagenWorker(Worker):
                 env=self.env,
                 scene_reuse_count=scene_reuse_count,
                 object_types_to_not_move=OBJECT_TYPES_TO_NOT_MOVE,
-                #max_obj_rearrangements_per_scene=20,
+                max_obj_rearrangements_per_scene=MIN_OBJECTS_TO_MOVE,
                 obj_name_to_avoid_positions=obj_name_to_avoid_positions,
                 reuse_i=reuse_i,
                 stage=stage,
@@ -1308,7 +1316,7 @@ class RearrangeProcTHORDatagenManager(Manager):
                     )
 
         elif task_type == "find_limits":
-            if result is not None:
+            if result is not None :#or True:
                 task_info["limits"] = result
                 for reuse_i in range(
                     self.scene_reuse_count
@@ -1364,6 +1372,146 @@ class RearrangeProcTHORDatagenManager(Manager):
         else:
             raise ValueError(f"Unknown task type {task_type}")
 
+class POMDPRearrangeProcTHORDatagenManager():
+    '''
+    def work(
+        self,
+        task_type: Optional[str],
+        task_info: Dict[str, Any],
+        success: bool,
+        result: Any,
+    ) -> None:
+        return
+    '''
+
+    def creat_scenes(self, ) : 
+        args = args_parsing()
+
+        stage_seeds = get_random_seeds()
+
+        if args.mode == "train":
+            self.scene_reuse_count = 20
+        elif args.mode in ["val", "test"]:
+            self.scene_reuse_count = 10
+
+        scene_to_obj_name_to_avoid_positions = None
+        if args.debug:
+            partition = "train" if args.mode == "train" else "valid"
+            idxs = "0,1,2"
+            stage_to_scenes = {
+                "debug": [f"{partition}_{idx}" for idx in idxs.split(",")]
+            }
+        elif args.train_unseen:
+            stage_to_scenes = {
+                "train_unseen": [
+                    f"train_{id}" for id in range(NUM_TRAIN_UNSEEN_EPISODES)
+                ]
+            }
+            scene_to_obj_name_to_avoid_positions = (
+                get_scene_to_obj_name_to_seen_positions()
+            )
+        else:
+            nums = {
+                "train": NUM_TRAIN_SCENES,
+                "val": NUM_VALID_SCENES,
+                "test": NUM_TEST_SCENES,
+            }
+            stage_to_scenes = {
+                stage: [f"{stage}_{id}" for id in range(nums[stage])]
+                for stage in [args.mode]  # ("train", "val", "test")
+            }
+
+        os.makedirs(STARTER_DATA_DIR, exist_ok=True)
+
+        self.last_save_time = {stage: time.time() for stage in stage_to_scenes}
+
+        self.stage_to_scene_to_rearrangements = {
+            stage: {} for stage in stage_to_scenes
+        }
+        for stage in stage_to_scenes:
+            path = os.path.join(STARTER_DATA_DIR, f"{stage}.json")
+            if os.path.exists(path):
+                with open(path, "r") as f:
+                    self.stage_to_scene_to_rearrangements[stage] = json.load(f)
+
+        for stage in stage_to_scenes:
+            for scene in stage_to_scenes[stage]:
+                if scene not in self.stage_to_scene_to_rearrangements[stage]:
+                    self.stage_to_scene_to_rearrangements[stage][scene] = [
+                        -1
+                    ] * self.scene_reuse_count
+
+                if scene_to_obj_name_to_avoid_positions is not None:
+                    obj_name_to_avoid_positions = scene_to_obj_name_to_avoid_positions[
+                        scene
+                    ]
+                else:
+                    obj_name_to_avoid_positions = None
+
+                self.find_limits(
+                    task_info=dict(
+                        scene=scene,
+                        stage=stage,
+                        seed=stage_seeds[stage],
+                        reuse_i=-1,
+                        obj_name_to_avoid_positions=obj_name_to_avoid_positions,
+                    ),
+                    result= None
+                )
+
+    def find_limits(self, task_info, result):
+        if result is not None:
+            task_info["limits"] = result
+            for reuse_i in range(
+                self.scene_reuse_count
+            ):  # if not args.debug else 4):
+                if (
+                    self.stage_to_scene_to_rearrangements[task_info["stage"]][
+                        task_info["scene"]
+                    ][reuse_i]
+                    == -1
+                ):
+                    task_info["reuse_i"] = reuse_i
+                    task_info["scene_reuse_count"] = self.scene_reuse_count
+                    self.rearrange(
+                        task_info=copy.deepcopy(task_info),
+                        result=None
+                    )
+
+    def rearrange(self, task_info, result):
+        scene, stage, seed, reuse_i = (
+            task_info["scene"],
+            task_info["stage"],
+            task_info["seed"],
+            task_info["reuse_i"],
+        )
+
+        scene_to_rearrangements = self.stage_to_scene_to_rearrangements[stage]
+        scene_to_rearrangements[scene][reuse_i] = result
+
+        num_missing = len([ep for ep in scene_to_rearrangements[scene] if ep == -1])
+
+        if num_missing == 0:
+            get_logger().info(f": Completed {stage} {scene}")
+
+        for stage in self.last_save_time:
+            if time.time() - self.last_save_time[stage] > 30 * 60 :
+                get_logger().info(f": Saving {stage}")
+
+                with open(
+                    os.path.join(STARTER_DATA_DIR, f"{stage}.json"), "w"
+                ) as f:
+                    json.dump(self.stage_to_scene_to_rearrangements[stage], f)
+
+                compress_pickle.dump(
+                    obj=self.stage_to_scene_to_rearrangements[stage],
+                    path=os.path.join(STARTER_DATA_DIR, f"{stage}.pkl.gz"),
+                    pickler_kwargs={
+                        "protocol": 4,
+                    },  # Backwards compatible with python 3.6
+                )
+
+                self.last_save_time[stage] = time.time()
 
 if __name__ == "__main__":
     args = args_parsing()
@@ -1374,12 +1522,15 @@ if __name__ == "__main__":
     if args.train_unseen:
         assert args.mode == "train"
 
+    #manager = POMDPRearrangeProcTHORDatagenManager()
+    #manager.creat_scenes()
     RearrangeProcTHORDatagenManager(
         worker_class=RearrangeProcTHORDatagenWorker,
         env_args={},
-        workers=max((3 * mp.cpu_count()) // 4, 1)
-        if platform.system() == "Linux" and not args.debug
-        else 1,
+        #workers=max((3 * mp.cpu_count()) // 4, 1)
+        #if platform.system() == "Linux" and not args.debug
+        #else 1,
+        workers=1,
         ngpus=torch.cuda.device_count(),
         die_on_exception=False,
         verbose=True,

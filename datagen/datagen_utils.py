@@ -40,10 +40,17 @@ def get_scenes_procthor(stage):
     base_dir = os.path.join("data", "2022procthor")
 
     split = ''
-    if 'train' in stage:
+    #if 'train' in stage:
+    #    split = 'split_train'
+    #elif 'valid' in stage: 
+    #    split = 'split_mini_val'
+    if stage == 'train':
         split = 'split_train'
-    elif 'valid' in stage: 
+    elif stage == 'valid':
         split = 'split_mini_val'
+    elif stage == 'mini_train':
+        split = 'split_mini_train'
+
 
     scene_names_file = os.path.join(
         ABS_PATH_OF_REARRANGE_TOP_LEVEL_DIR,
@@ -57,7 +64,7 @@ def get_scenes_procthor(stage):
         return compress_json.load(scene_names_file)
 
     firsts_lasts_fnames = []
-    dataset_file_paths = glob.glob(os.path.join(base_dir, "split_train", "*.pkl.gz"))
+    dataset_file_paths = glob.glob(os.path.join(base_dir, split, "*.pkl.gz"))
     assert len(dataset_file_paths) > 0
     for fname in dataset_file_paths:
         vals = fname.replace(".pkl.gz", "").split("_")[-2:]
@@ -66,7 +73,7 @@ def get_scenes_procthor(stage):
 
     scenes = []
     for first, last, fname in firsts_lasts_fnames:
-        get_logger().info(f"Loading data from {fname}")
+        #get_logger().info(f"Loading data from {fname}")
         current_scenes = list(compress_pickle.load(path=fname).keys())
         scenes.extend(sorted(current_scenes, key=lambda x: int(x.split("_")[1])))
 

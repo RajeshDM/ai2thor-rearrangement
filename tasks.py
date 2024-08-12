@@ -162,6 +162,65 @@ def consolidate_procthor_val(ctx, output_name="val_consolidated"):
 
     print("DONE")
 
+#@task
+def consolidate_procthor_traincustom(output_name="train_consolidated"):
+    import os
+    import compress_pickle
+
+    from datagen.procthor_datagen.datagen_runner import STARTER_DATA_DIR
+
+    random.seed(123456)
+
+    path = os.path.join(STARTER_DATA_DIR, f"train.pkl.gz")
+    if os.path.exists(path):
+        generated_episodes = compress_pickle.load(path)
+    else:
+        print(f"Missing {path}. DONE.")
+        return
+
+    print (path)
+    #exit()
+
+    env = make_env()
+
+    filtered_episodes = {}
+    total_episodes = 0
+    scenes = list(generated_episodes.keys())
+    num_rooms = []
+    for scene in scenes:
+        specs = generated_episodes[scene]
+        valid_specs = [spec for spec in specs if spec is not None and spec != -1]
+        if len(valid_specs) != 20:
+            print(f"skipped missing episodes {len(valid_specs)}")
+            continue
+
+        #num_openables = len(
+        #    [spec for spec in valid_specs if len(spec["openable_data"]) > 0]
+        #)
+        #if num_openables != 5:
+        #    print("skipped missing openables")
+        #    continue
+
+        num_rooms.append(env.num_rooms(scene))
+
+        filtered_episodes[scene] = valid_specs
+        total_episodes += len(valid_specs)
+
+    consolidated_path = os.path.join(STARTER_DATA_DIR, f"{output_name}.pkl.gz")
+    print(
+        f"{consolidated_path} contains {len(filtered_episodes)} scenes with a total of {total_episodes} episodes"
+        f" ({total_episodes / len(filtered_episodes):.2f} episodes per scene)"
+    )
+
+    compress_pickle.dump(
+        obj=filtered_episodes,
+        path=consolidated_path,
+        pickler_kwargs={"protocol": 4},  # Backwards compatible with python 3.6
+    )
+
+    print(num_rooms)
+
+    print("DONE")
 
 @task
 def split_data(ctx, mode="val", input_name="val_consolidated"):
@@ -173,6 +232,40 @@ def split_data(ctx, mode="val", input_name="val_consolidated"):
     all_idxs = sorted([int(scene.split("_")[-1]) for scene in list(all_data.keys())])
 
     output_folder = os.path.join(
+        STARTER_DATA_DIR, f"split_{input_name.replace('_consolidated', '')}"
+    )
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Make groups of up to 100 scenes (for small houses) or 400 scenes (all 10k houses)
+    group = 100 if len(all_idxs) < 3000 else 400
+    for first_idx in range(0, len(all_idxs), group):
+        last_idx = min(len(all_idxs), first_idx + group)
+        print(f"{all_idxs[first_idx]} to {all_idxs[last_idx - 1]}")
+        current_keys = [f"{mode}_{all_idxs[idx]}" for idx in range(first_idx, last_idx)]
+        partial_dataset = {key: all_data[key] for key in current_keys}
+
+        consolidated_path = os.path.join(
+            output_folder,
+            f"{mode}_{all_idxs[first_idx]}_{all_idxs[last_idx - 1]}.pkl.gz",
+        )
+        compress_pickle.dump(
+            obj=partial_dataset,
+            path=consolidated_path,
+            pickler_kwargs={"protocol": 4},  # Backwards compatible with python 3.6
+        )
+
+    print("DONE")
+
+def split_data_custom( mode="val", input_name="val_consolidated"):
+    from rearrange.procthor_rearrange.constants import STARTER_DATA_DIR
+    import compress_pickle
+
+    all_data = load_procthor_rearrange(input_name, folder='data/2022procthor_new')
+
+    all_idxs = sorted([int(scene.split("_")[-1]) for scene in list(all_data.keys())])
+
+    output_folder = os.path.join(
+        #PATH IS OLD ONE HERE
         STARTER_DATA_DIR, f"split_{input_name.replace('_consolidated', '')}"
     )
     os.makedirs(output_folder, exist_ok=True)
@@ -354,6 +447,160 @@ def make_procthor_mini_val(
 
     print("DONE")
 
+def make_procthor_mini_traincustom(
+    stats_file="data/2022procthor_new/procthor_train_scene_stats.json",
+    chosen_scenes=4,
+    seed=12345,
+    num_attempts=10,
+):
+    from collections import defaultdict
+    import compress_pickle
+    import os
+    import heapq as hq
+    import numpy as np
+
+    random.seed(seed)
+
+    val = load_procthor_rearrange("train_consolidated", "data/2022procthor_new")
+
+    if os.path.isfile(stats_file):
+        with open(stats_file, "r") as f:
+            stats = json.load(f)
+    else:
+        stats = {}
+
+    if len(stats) < len(val):
+        with open(stats_file, "w") as f:
+            json.dump(stats, f, indent=4, sort_keys=True)
+
+        env = make_env()
+
+        for scene in val:
+            if scene in stats:
+                continue
+
+            print(scene)
+            env.procthor_reset(scene)
+
+            target_freqs = defaultdict(int)
+
+            id_to_type = {obj["objectId"]: obj["objectType"] for obj in env.objects()}
+            name_to_type = {obj["name"]: obj["objectType"] for obj in env.objects()}
+
+            #expected_targets = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+            expected_targets = [10 for i in range(20)]
+            for epit, ep in enumerate(val[scene]):
+                num_targets = 0
+
+                if len(ep["openable_data"]) > 0:
+                    target_freqs[id_to_type[ep["openable_data"][0]["objectId"]]] += 1
+                    num_targets += 1
+
+                for sp, tp in zip(ep["starting_poses"], ep["target_poses"]):
+                    assert sp["name"] == tp["name"]
+
+                    if (
+                        math.sqrt(
+                            sum(
+                                (sp["position"][x] - tp["position"][x]) ** 2
+                                for x in "xyz"
+                            )
+                        )
+                        > 0.01
+                    ):
+                        target_freqs[name_to_type[sp["name"]]] += 1
+                        num_targets += 1
+
+                if num_targets != expected_targets[epit]:
+                    print(
+                        f"{scene} {epit} had {num_targets} for expected {expected_targets[epit]}"
+                    )
+
+            stats[scene] = {**target_freqs}
+
+            with open(stats_file, "w") as f:
+                json.dump(stats, f, indent=4, sort_keys=True)
+
+        env.stop()
+
+    scenes = list(stats.keys())
+
+    max_length = 0
+    best_set = None
+    min_ratio = float(np.inf)
+    for attempt in range(num_attempts):
+        random.shuffle(scenes)
+
+        total_target_freqs = defaultdict(int)
+        pqueue = []
+        for scene in scenes:
+            target_freqs = stats[scene]
+
+            scene_priority = -np.sum(
+                [1.0 / (1e-6 + total_target_freqs[typ]) for typ in target_freqs]
+            )
+
+            hq.heappush(pqueue, (scene_priority, scene))
+
+            # Update target type frequencies
+            for typ in target_freqs:
+                total_target_freqs[typ] += target_freqs[typ]
+
+        mini_val = {}
+        num_episodes = 0
+        included_targets = defaultdict(int)
+        for it in range(chosen_scenes):
+            scene = hq.heappop(pqueue)[1]
+            mini_val[scene] = val[scene]
+            num_episodes += len(mini_val[scene])
+            target_freqs = stats[scene]
+            for typ in target_freqs:
+                included_targets[typ] += target_freqs[typ]
+
+        if len(included_targets) < max_length:
+            continue
+
+        if max(included_targets.values()) / min(included_targets.values()) >= min_ratio:
+            if len(included_targets) == max_length:
+                continue
+
+        max_length = len(included_targets)
+        min_ratio = max(included_targets.values()) / min(included_targets.values())
+        best_set = mini_val
+
+        print(
+            f"Attempt {attempt} {len(mini_val)} scenes, {num_episodes} episodes ({num_episodes/len(mini_val)} per scene)"
+        )
+
+        # included targets
+        included_targets = sorted(
+            [(included_targets[typ], typ) for typ in included_targets], reverse=True
+        )
+        print(
+            f"Attempt {attempt} Included targets ({len(included_targets)}, ratio {min_ratio}): {included_targets}"
+        )
+
+    included_targets = defaultdict(int)
+    random.shuffle(scenes)
+    for it in range(chosen_scenes):
+        target_freqs = stats[scenes[it]]
+        for typ in target_freqs:
+            included_targets[typ] += target_freqs[typ]
+    included_targets = sorted(
+        [(included_targets[typ], typ) for typ in included_targets], reverse=True
+    )
+    print(f"Random choice targets ({len(included_targets)}): {included_targets}")
+
+    os.makedirs("data/2022prcthor_new", exist_ok=True)
+    compress_pickle.dump(
+        obj=best_set,
+        path="data/2022procthor_new/mini_train_consolidated.pkl.gz",
+        pickler_kwargs={"protocol": 4},  # Backwards compatible with python 3.6
+    )
+
+    split_data_custom(mode="train", input_name="mini_train_consolidated")
+
+    print("DONE")
 
 @task
 def make_valid_houses_file(
@@ -385,6 +632,34 @@ def make_valid_houses_file(
     if verbose:
         print("DONE")
 
+def make_valid_houses_file_cutsom(
+    num_valid_houses=1_000, prefix="train", load_folder='2022procthor',verbose=True
+):
+    used_houses = [None] * num_valid_houses  # Assume
+    from utils.procthor_utils import Houses
+
+    houses = Houses()
+    houses.mode("train")
+    #assert len(houses) == num_valid_houses
+
+    episodes = compress_pickle.load(
+        os.path.join("data", load_folder, f"{prefix}_consolidated.pkl.gz")
+    )
+    num_used = 0
+    for scene in episodes:
+        if verbose:
+            print(scene)
+        pos = int(scene.split("_")[-1])
+        used_houses[pos] = houses._data[houses._mode][pos]
+        num_used += 1
+
+    ofilename = os.path.join("data", load_folder, f"{prefix}_houses.pkl.gz")
+    print(f"Writing {num_used} houses to {ofilename}")
+
+    compress_pickle.dump(used_houses, ofilename)
+
+    if verbose:
+        print("DONE")
 
 @task
 def make_procthor_mini_train(

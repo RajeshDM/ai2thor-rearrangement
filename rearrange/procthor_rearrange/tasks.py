@@ -148,6 +148,10 @@ class RearrangeTaskSampler(BaseRearrangeTaskSampler):
         elif stage in ["mini_val", "mini_valid"]:
             stage = "val"
             folder = "split_mini_val"
+
+        elif stage in ["mini_train"]:
+            stage = "mini_train"
+            folder = "split_mini_train"
         else:
             folder = "unknown"
 

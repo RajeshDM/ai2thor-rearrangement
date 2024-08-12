@@ -488,7 +488,7 @@ class TwoPhaseRGBBaseExperimentConfigProc(ExperimentConfig, abc.ABC):
         # if binned_pc_sensor is not None:
         #     binned_pc_sensor.device = torch.device(device)
 
-        if stage != "train":
+        if stage != "train" and stage != 'mini_train':
             raise NotImplementedError
             # # Don't include several sensors during validation/testing
             # kwargs["sensors"] = [

@@ -8,7 +8,7 @@ from rearrange.procthor_rearrange.tasks import RearrangeTaskSampler, UnshuffleTa
 #print (dataset)
 
 task_sampler_params = TwoPhaseRGBBaseExperimentConfigProc.stagewise_task_sampler_args(
-    stage="train", process_ind=0, total_processes=1,
+    stage="mini_train", process_ind=0, total_processes=1,
 )
 
 two_phase_rgb_task_sampler: RearrangeTaskSampler = TwoPhaseRGBBaseExperimentConfigProc.make_sampler_fn(

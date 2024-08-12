@@ -6,6 +6,7 @@ from collections import Counter
 from PIL import Image
 from ai2thor.controller import Controller
 from thortils import VideoRecorder 
+from collections import defaultdict
 
 from rearrange.procthor_rearrange.constants import ASSET_TO_OBJECT , PICKUPABLE_OBJECTS_PROC
 from cospomdp_apps.thor.rearrange_utils import get_obj_from_asset_ID
@@ -138,14 +139,29 @@ def write_to_json(data, filename):
 def save_houses_info(revision):
 
     if revision is None:
-        dataset = prior.load_dataset("procthor-10k")#, revision='rearrangement-2022')
+        dataset = prior.load_dataset("procthor-10k", revision='ab3cacd0fc17754d4c080a3fd50b18395fae8647')
+        #, revision='rearrangement-2022')
     else :
         dataset = prior.load_dataset("procthor-10k", revision=revision)
-
 
     for split in ['train', 'val', 'test']:
         processed_data = process_house_data(dataset[split], split)
         write_to_json(processed_data, f'house_data_summary_{split}.json')
+
+
+def inspect_dataset(dataset):
+    room_info = defaultdict(int)
+    object_info = defaultdict(int)
+
+    data = dataset['train']
+    for house in data :
+        #if len(house['rooms']) > 2 and len(house['rooms']) < 4 :
+        #    num_houses += 1 
+        room_info[len(house['rooms'])] += 1
+        object_info[len(house['objects'])] += 1
+    print ("num houses with correct number of rooms : ", room_info)
+    print ("num objects info", object_info)
+
 
 def load_json_file(filename):
     with open(filename, 'r') as f:
@@ -197,7 +213,12 @@ def filter_and_save_houses_by_split(min_rooms=1, max_rooms=4, allow_duplicates=F
 
 if __name__ == '__main__':
     controller = Controller()
-    save_houses_info(revision='rearrangement-2022')
+    #save_houses_info(revision=None)
+    dataset = prior.load_dataset("procthor-10k", revision='ab3cacd0fc17754d4c080a3fd50b18395fae8647')
+    inspect_dataset(dataset)
+    dataset = prior.load_dataset("procthor-10k", revision='5647c42760bafcc2b06704cbc87745dc41b9d2a8')
+    inspect_dataset(dataset)
+    #save_houses_info(revision='rearrangement-2022')
     #allow_duplicates = True
     #for i in range(1, 5):
     #    filter_and_save_houses_by_split(min_rooms=i, max_rooms=i, allow_duplicates=allow_duplicates)

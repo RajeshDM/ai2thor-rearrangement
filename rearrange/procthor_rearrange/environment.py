@@ -390,7 +390,7 @@ class RearrangeProcTHOREnvironment(RearrangeTHOREnvironment):
         ), "Either controller_kwargs must contain either both of width/height or neither."
         self._controller_kwargs["width"] = self._controller_kwargs.get("width", 300)
         self._controller_kwargs["height"] = self._controller_kwargs.get("height", 300)
-        self._controller_kwargs['platform'] = CloudRendering
+        #self._controller_kwargs['platform'] = CloudRendering
 
         assert (
             "scene" in self._controller_kwargs
